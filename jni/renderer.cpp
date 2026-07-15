@@ -54,19 +54,11 @@ void main() {
 )";
 
 // ================================================================
-// FONT RENDERER
+// FONT RENDERER (упрощённый, без ошибок)
 // ================================================================
-struct Glyph {
-    float u1, v1, u2, v2;
-    float width, height;
-    float advance;
-};
-
 class FontRenderer {
 private:
     GLuint texture_id = 0;
-    int tex_width = 512, tex_height = 512;
-    std::map<char, Glyph> glyphs;
     bool initialized = false;
     GLuint shader_program = 0;
     
@@ -75,46 +67,25 @@ public:
         if (initialized) return true;
         shader_program = prog;
         
+        // Создаём простую текстуру с белыми символами
         glGenTextures(1, &texture_id);
         glBindTexture(GL_TEXTURE_2D, texture_id);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         
-        unsigned char* pixels = new unsigned char[tex_width * tex_height * 4];
-        memset(pixels, 0, tex_width * tex_height * 4);
+        int tex_w = 256, tex_h = 256;
+        unsigned char* pixels = new unsigned char[tex_w * tex_h * 4];
+        memset(pixels, 0, tex_w * tex_h * 4);
         
-        int char_width = 8, char_height = 8;
-        int chars_per_row = tex_width / char_width;
-        
-        for (int c = 32; c < 127; c++) {
-            int idx = c - 32;
-            int col = idx % chars_per_row;
-            int row = idx / chars_per_row;
-            
-            Glyph g;
-            g.u1 = (float)(col * char_width) / tex_width;
-            g.v1 = (float)(row * char_height) / tex_height;
-            g.u2 = (float)((col + 1) * char_width) / tex_width;
-            g.v2 = (float)((row + 1) * char_height) / tex_height;
-            g.width = char_width;
-            g.height = char_height;
-            g.advance = char_width;
-            glyphs[(char)c] = g;
-            
-            for (int y = 0; y < char_height; y++) {
-                for (int x = 0; x < char_width; x++) {
-                    int px = col * char_width + x;
-                    int py = row * char_height + y;
-                    int index = (py * tex_width + px) * 4;
-                    pixels[index] = 255;
-                    pixels[index+1] = 255;
-                    pixels[index+2] = 255;
-                    pixels[index+3] = 255;
-                }
-            }
+        // Просто заливаем белым (упрощённый шрифт)
+        for (int i = 0; i < tex_w * tex_h * 4; i += 4) {
+            pixels[i] = 255;
+            pixels[i+1] = 255;
+            pixels[i+2] = 255;
+            pixels[i+3] = 255;
         }
         
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, tex_width, tex_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, tex_w, tex_h, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
         delete[] pixels;
         
         initialized = true;
@@ -123,7 +94,7 @@ public:
     }
     
     float get_text_width(const std::string& text, float scale = 1.0f) {
-        return text.length() * 8 * scale;
+        return text.length() * 10 * scale;
     }
     
     void draw_text(const std::string& text, float x, float y, float r, float g, float b, float a, float scale = 1.0f) {
@@ -135,23 +106,16 @@ public:
         glUniform1i(glGetUniformLocation(shader_program, "uTexture"), 0);
         glUniform1i(glGetUniformLocation(shader_program, "uUseTexture"), 1);
         
+        float w = 10 * scale;
+        float h = 14 * scale;
         float cx = x;
-        float char_width = 8 * scale;
-        float char_height = 8 * scale;
         
         for (char c : text) {
-            auto it = glyphs.find(c);
-            if (it == glyphs.end()) continue;
-            
-            Glyph& g = it->second;
-            float w = char_width;
-            float h = char_height;
-            
             float vertices[32] = {
-                cx, y,     g.u1, g.v1, r, g, b, a,
-                cx + w, y, g.u2, g.v1, r, g, b, a,
-                cx, y + h, g.u1, g.v2, r, g, b, a,
-                cx + w, y + h, g.u2, g.v2, r, g, b, a
+                cx, y,     0, 0, r, g, b, a,
+                cx + w, y, 1, 0, r, g, b, a,
+                cx, y + h, 0, 1, r, g, b, a,
+                cx + w, y + h, 1, 1, r, g, b, a
             };
             
             GLuint vbo;
@@ -169,7 +133,7 @@ public:
             glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
             glDeleteBuffers(1, &vbo);
             
-            cx += 8 * scale;
+            cx += w + 2;
         }
     }
 };

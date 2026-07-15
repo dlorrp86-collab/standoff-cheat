@@ -118,11 +118,11 @@ namespace config {
     } skin;
     
     struct Menu {
-        bool visible = true;
+        bool visible = false;
+        int active_tab = 0;
         float scale = 1.0f;
         int theme = 0;
         uint32_t accent = 0xFF4488CC;
-        int active_tab = 0;
     } menu;
 }
 
@@ -488,37 +488,183 @@ extern void draw_circle(float x, float y, float radius, float r, float g, float 
 extern void draw_triangle(float x1, float y1, float x2, float y2, float x3, float y3, float r, float g, float b, float a);
 
 // ================================================================
-// PART 6: AIMBOT
+// PART 6: UI MENU (with white bar trigger)
 // ================================================================
-namespace aimbot {
-    using namespace game;
-    
-    Vector3 calc_angle(const Vector3& from, const Vector3& to) {
-        Vector3 delta = to - from;
-        float dist = delta.length();
-        if (dist < 0.001f) return Vector3();
-        Vector3 angle;
-        angle.x = asin(delta.y / dist) * 180.0f / 3.14159265f;
-        angle.y = -atan2(delta.x, delta.z) * 180.0f / 3.14159265f;
-        return angle;
-    }
-    
-    float calc_fov(const Vector3& current, const Vector3& target) {
-        Vector3 diff = target - current;
-        diff.y = utils::normalize_angle(diff.y);
-        return fabs(diff.x) + fabs(diff.y);
-    }
-    
-    Vector3 smooth_angle(const Vector3& current, const Vector3& target, float smooth) {
-        Vector3 diff = target - current;
-        diff.y = utils::normalize_angle(diff.y);
-        return current + diff / smooth;
-    }
-    
-    void run(GameData& game, const config::Aimbot& cfg) {
-        if (!cfg.enabled || !game.valid || !game.local_player) return;
-        // Simplified implementation
-    }
+namespace ui {
+    class Menu {
+    private:
+        bool visible = false;
+        int active_tab = 0;
+        float screen_width = 1080;
+        float screen_height = 2400;
+        bool trigger_ready = false;
+        float white_bar_anim = 0.0f;
+        
+        std::vector<std::string> tab_names = {
+            "Aimbot", "Anti-Aim", "Visual", "Chams", "Skins", "Misc", "Settings"
+        };
+        
+        bool is_point_in_rect(float px, float py, float rx, float ry, float rw, float rh) {
+            return px >= rx && px <= rx + rw && py >= ry && py <= ry + rh;
+        }
+        
+    public:
+        void set_screen_size(float w, float h) {
+            screen_width = w;
+            screen_height = h;
+        }
+        
+        void toggle() {
+            visible = !visible;
+            if (visible) {
+                white_bar_anim = 0.0f;
+            }
+        }
+        
+        bool is_visible() const { return visible; }
+        
+        void handle_touch(float x, float y) {
+            // Белая полоска внизу - клик для открытия
+            if (y > screen_height - 50 && y < screen_height) {
+                if (!visible) {
+                    toggle();
+                }
+                return;
+            }
+            
+            if (!visible) return;
+            
+            // Закрытие по X
+            if (is_point_in_rect(x, y, 100 + 600 - 30, 100 + 10, 30, 30)) {
+                toggle();
+                return;
+            }
+            
+            // Табы
+            float mx = 100, my = 100, mw = 600;
+            float tw = mw / tab_names.size();
+            if (y > 142 && y < 177) {
+                for (int i = 0; i < tab_names.size(); i++) {
+                    if (is_point_in_rect(x, y, mx + i * tw, my + 42, tw, 35)) {
+                        active_tab = i;
+                        return;
+                    }
+                }
+            }
+        }
+        
+        void render() {
+            // --- БЕЛАЯ ПОЛОСКА ВНИЗУ (всегда видна) ---
+            float bar_height = 4.0f;
+            float bar_y = screen_height - bar_height;
+            draw_rect(0, bar_y, screen_width, bar_height, 1.0f, 1.0f, 1.0f, 0.4f);
+            
+            // Анимация пульсации, если меню закрыто (привлекает внимание)
+            if (!visible) {
+                float pulse = (sin(std::chrono::steady_clock::now().time_since_epoch().count() / 1e9f * 2.0f) + 1.0f) * 0.2f + 0.3f;
+                draw_rect(0, bar_y, screen_width, bar_height, 1.0f, 1.0f, 1.0f, pulse);
+            }
+            
+            if (!visible) return;
+            
+            // --- ЗАТЕМНЕНИЕ ФОНА ---
+            draw_rect(0, 0, screen_width, screen_height, 0, 0, 0, 0.7f);
+            
+            // --- ОСНОВНОЕ ОКНО МЕНЮ ---
+            float mx = 100, my = 100, mw = 600, mh = 700;
+            draw_rect(mx, my, mw, mh, 0.08f, 0.08f, 0.10f, 0.95f);
+            draw_rect_outline(mx, my, mw, mh, 0.3f, 0.3f, 0.4f, 0.5f, 1.0f);
+            
+            // --- ЗАГОЛОВОК ---
+            draw_rect(mx, my, mw, 40, 0.15f, 0.15f, 0.18f, 1.0f);
+            draw_text(mx + 20, my + 12, "Serap Internal v1.0", 0.2f, 0.6f, 1.0f, 1.0f, 16, false);
+            
+            // Кнопка закрытия
+            draw_text(mx + mw - 25, my + 12, "X", 1.0f, 0.3f, 0.3f, 1.0f, 16, false);
+            
+            // --- ТАБЫ ---
+            float tw = mw / tab_names.size();
+            for (int i = 0; i < tab_names.size(); i++) {
+                bool active = (i == active_tab);
+                float r = active ? 0.2f : 0.12f;
+                float g = active ? 0.4f : 0.12f;
+                float b = active ? 0.8f : 0.14f;
+                draw_rect(mx + i * tw, my + 42, tw, 35, r, g, b, 1.0f);
+                draw_text(mx + i * tw + tw/2, my + 60, tab_names[i], 
+                         1.0f, 1.0f, 1.0f, active ? 1.0f : 0.6f, 12, true);
+            }
+            
+            // --- СОДЕРЖИМОЕ ВКЛАДОК ---
+            float cy = my + 90;
+            float lx = mx + 20;
+            
+            switch (active_tab) {
+                case 0: { // Aimbot
+                    draw_text(lx, cy, "Aimbot Settings", 0.8f, 0.8f, 1.0f, 1.0f, 16, false); cy += 30;
+                    draw_text(lx, cy, "[ ] Enable Aimbot", 1,1,1,0.9f, 14, false); cy += 28;
+                    draw_text(lx, cy, "[X] Silent Aim", 1,1,1,0.9f, 14, false); cy += 28;
+                    draw_text(lx, cy, "FOV: [==========------] 30", 1,1,1,0.9f, 14, false); cy += 28;
+                    draw_text(lx, cy, "Smooth: [=====---------] 5", 1,1,1,0.9f, 14, false); cy += 28;
+                    draw_text(lx, cy, "Bone: [Head v]", 1,1,1,0.9f, 14, false); cy += 28;
+                    draw_text(lx, cy, "[X] Triggerbot", 1,1,1,0.9f, 14, false); cy += 28;
+                    break;
+                }
+                case 1: { // Anti-Aim
+                    draw_text(lx, cy, "Anti-Aim Settings", 0.8f, 0.8f, 1.0f, 1.0f, 16, false); cy += 30;
+                    draw_text(lx, cy, "[ ] Enable Anti-Aim", 1,1,1,0.9f, 14, false); cy += 28;
+                    draw_text(lx, cy, "Pitch: [Up v]", 1,1,1,0.9f, 14, false); cy += 28;
+                    draw_text(lx, cy, "Yaw: [Spin v]", 1,1,1,0.9f, 14, false); cy += 28;
+                    draw_text(lx, cy, "Jitter: [Random v]", 1,1,1,0.9f, 14, false); cy += 28;
+                    break;
+                }
+                case 2: { // Visual
+                    draw_text(lx, cy, "Visual Settings", 0.8f, 0.8f, 1.0f, 1.0f, 16, false); cy += 30;
+                    draw_text(lx, cy, "[X] Enable ESP", 1,1,1,0.9f, 14, false); cy += 28;
+                    draw_text(lx, cy, "[X] Box ESP", 1,1,1,0.9f, 14, false); cy += 28;
+                    draw_text(lx, cy, "[X] Health Bar", 1,1,1,0.9f, 14, false); cy += 28;
+                    draw_text(lx, cy, "[X] Name", 1,1,1,0.9f, 14, false); cy += 28;
+                    draw_text(lx, cy, "[ ] Skeleton", 1,1,1,0.9f, 14, false); cy += 28;
+                    draw_text(lx, cy, "[ ] Snaplines", 1,1,1,0.9f, 14, false); cy += 28;
+                    break;
+                }
+                case 3: { // Chams
+                    draw_text(lx, cy, "Chams Settings", 0.8f, 0.8f, 1.0f, 1.0f, 16, false); cy += 30;
+                    draw_text(lx, cy, "[ ] Enable Chams", 1,1,1,0.9f, 14, false); cy += 28;
+                    draw_text(lx, cy, "Type: [Glow v]", 1,1,1,0.9f, 14, false); cy += 28;
+                    draw_text(lx, cy, "[X] Enemy", 1,1,1,0.9f, 14, false); cy += 28;
+                    draw_text(lx, cy, "[X] Teammates", 1,1,1,0.9f, 14, false); cy += 28;
+                    break;
+                }
+                case 4: { // Skins
+                    draw_text(lx, cy, "Skin Changer", 0.8f, 0.8f, 1.0f, 1.0f, 16, false); cy += 30;
+                    draw_text(lx, cy, "[ ] Enable Skin Changer", 1,1,1,0.9f, 14, false); cy += 28;
+                    draw_text(lx, cy, "Weapon: [AK-47 v]", 1,1,1,0.9f, 14, false); cy += 28;
+                    draw_text(lx, cy, "Skin: [Redline v]", 1,1,1,0.9f, 14, false); cy += 28;
+                    draw_text(lx, cy, "Pattern: 420", 1,1,1,0.9f, 14, false); cy += 28;
+                    draw_text(lx, cy, "StatTrak: 1337", 1,1,1,0.9f, 14, false); cy += 28;
+                    break;
+                }
+                case 5: { // Misc
+                    draw_text(lx, cy, "Misc Settings", 0.8f, 0.8f, 1.0f, 1.0f, 16, false); cy += 30;
+                    draw_text(lx, cy, "[ ] Third Person", 1,1,1,0.9f, 14, false); cy += 28;
+                    draw_text(lx, cy, "Distance: 200", 1,1,1,0.9f, 14, false); cy += 28;
+                    draw_text(lx, cy, "[ ] Fly", 1,1,1,0.9f, 14, false); cy += 28;
+                    draw_text(lx, cy, "[ ] Noclip", 1,1,1,0.9f, 14, false); cy += 28;
+                    draw_text(lx, cy, "[X] No Recoil", 1,1,1,0.9f, 14, false); cy += 28;
+                    draw_text(lx, cy, "[X] No Spread", 1,1,1,0.9f, 14, false); cy += 28;
+                    draw_text(lx, cy, "[X] Infinite Ammo", 1,1,1,0.9f, 14, false); cy += 28;
+                    break;
+                }
+                case 6: { // Settings
+                    draw_text(lx, cy, "Settings", 0.8f, 0.8f, 1.0f, 1.0f, 16, false); cy += 30;
+                    draw_text(lx, cy, "Theme: [Dark v]", 1,1,1,0.9f, 14, false); cy += 28;
+                    draw_text(lx, cy, "UI Scale: 1.0", 1,1,1,0.9f, 14, false); cy += 28;
+                    draw_text(lx, cy, "Accent Color: [#4488CC]", 1,1,1,0.9f, 14, false); cy += 28;
+                    break;
+                }
+            }
+        }
+    };
 }
 
 // ================================================================
@@ -580,8 +726,72 @@ namespace esp {
 }
 
 // ================================================================
-// PART 8: ENTRY POINT
+// PART 8: AIMBOT
 // ================================================================
+namespace aimbot {
+    using namespace game;
+    
+    Vector3 calc_angle(const Vector3& from, const Vector3& to) {
+        Vector3 delta = to - from;
+        float dist = delta.length();
+        if (dist < 0.001f) return Vector3();
+        Vector3 angle;
+        angle.x = asin(delta.y / dist) * 180.0f / 3.14159265f;
+        angle.y = -atan2(delta.x, delta.z) * 180.0f / 3.14159265f;
+        return angle;
+    }
+    
+    void run(GameData& game, const config::Aimbot& cfg) {
+        if (!cfg.enabled || !game.valid || !game.local_player) return;
+        // Simplified implementation
+    }
+}
+
+// ================================================================
+// PART 9: GAME LOOP
+// ================================================================
+ui::Menu* g_menu = nullptr;
+
+class GameLoop {
+private:
+    game::GameData data;
+    std::atomic<bool> running{false};
+    
+public:
+    void run() {
+        running = true;
+        LOGI("GameLoop started");
+        
+        // Создаём меню
+        g_menu = new ui::Menu();
+        g_menu->set_screen_size(1080, 2400);
+        
+        while (running) {
+            if (memory::MemoryManager::get().valid()) {
+                data.update();
+                
+                if (data.valid) {
+                    aimbot::run(data, config::aimbot);
+                    esp::render(data, config::esp);
+                    
+                    // Рендер меню
+                    if (g_menu) {
+                        g_menu->render();
+                    }
+                }
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        }
+    }
+    
+    void stop() { running = false; }
+};
+
+// ================================================================
+// PART 10: ENTRY POINT
+// ================================================================
+GameLoop* g_loop = nullptr;
+
 __attribute__((constructor))
 void OnLoad() {
     LOGI("Serap Internal v1.0 - Loading...");
@@ -591,7 +801,34 @@ void OnLoad() {
         return;
     }
     LOGI("Game found! PID=%d, Base=0x%lx", mem.pid(), mem.base());
+    
+    g_loop = new GameLoop();
+    std::thread loop_thread(&GameLoop::run, g_loop);
+    loop_thread.detach();
+    
     LOGI("Serap Internal v1.0 - Ready!");
+}
+
+__attribute__((destructor))
+void OnUnload() {
+    if (g_loop) { g_loop->stop(); delete g_loop; }
+    if (g_menu) { delete g_menu; }
+    LOGI("Serap Internal v1.0 - Unloaded");
+}
+
+// ================================================================
+// JNI EXPORTS
+// ================================================================
+extern "C" {
+    JNIEXPORT void JNICALL
+    Java_com_standoff2_SerapBridge_toggleMenu(JNIEnv* env, jobject obj) {
+        if (g_menu) g_menu->toggle();
+    }
+    
+    JNIEXPORT void JNICALL
+    Java_com_standoff2_SerapBridge_handleTouch(JNIEnv* env, jobject obj, jfloat x, jfloat y) {
+        if (g_menu) g_menu->handle_touch(x, y);
+    }
 }
 
 // ================================================================

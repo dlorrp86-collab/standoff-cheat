@@ -1,0 +1,30 @@
+name: Build Cheat Library
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Android NDK
+        run: |
+          wget https://dl.google.com/android/repository/android-ndk-r25c-linux.zip
+          unzip android-ndk-r25c-linux.zip
+          echo "NDK=$PWD/android-ndk-r25c" >> $GITHUB_ENV
+
+      - name: Compile library
+        run: |
+          cd jni
+          $NDK/ndk-build
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: libserap
+          path: libs/arm64-v8a/libserap.so

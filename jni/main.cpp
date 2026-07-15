@@ -290,6 +290,10 @@ namespace game {
         Vector3 operator-(const Vector3& o) const { return Vector3(x-o.x, y-o.y, z-o.z); }
         Vector3 operator+(const Vector3& o) const { return Vector3(x+o.x, y+o.y, z+o.z); }
         Vector3 operator*(float s) const { return Vector3(x*s, y*s, z*s); }
+        Vector3 operator/(float s) const { return Vector3(x/s, y/s, z/s); }
+        Vector3 cross(const Vector3& o) const {
+            return Vector3(y*o.z - z*o.y, z*o.x - x*o.z, x*o.y - y*o.x);
+        }
         float dot(const Vector3& o) const { return x*o.x + y*o.y + z*o.z; }
         float length() const { return sqrt(x*x + y*y + z*z); }
         Vector3 normalized() const { float l = length(); return l > 0 ? *this / l : Vector3(); }
@@ -520,3 +524,7 @@ void OnLoad() {
     LOGI("Game found! PID=%d, Base=0x%lx", mem.pid(), mem.base());
     LOGI("Serap Internal v1.0 - Ready!");
 }
+
+// ================================================================
+// END OF FILE
+// ================================================================

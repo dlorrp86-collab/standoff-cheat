@@ -1,29 +1,26 @@
 // ================================================================
 // RENDERER - OPENGL ES 3.0 BACKEND
-// For ESP and UI rendering
 // ================================================================
 
 #include <EGL/egl.h>
 #include <GLES3/gl3.h>
 #include <android/native_window.h>
 #include <android/native_window_jni.h>
-#include <android/asset_manager.h>
-#include <android/asset_manager_jni.h>
-#include <map>
+#include <android/log.h>
 #include <string>
 #include <vector>
+#include <map>
 #include <mutex>
-#include <thread>
-#include <chrono>
+#include <cmath>
+#include <cstring>
 
 #define RENDER_TAG "Renderer"
 #define RLOGI(...) __android_log_print(ANDROID_LOG_INFO, RENDER_TAG, __VA_ARGS__)
 #define RLOGE(...) __android_log_print(ANDROID_LOG_ERROR, RENDER_TAG, __VA_ARGS__)
 
 // ================================================================
-// PART 1: SHADERS
+// SHADERS
 // ================================================================
-
 static const char* vertex_shader_source = R"(
 #version 300 es
 layout(location = 0) in vec2 aPos;
@@ -57,9 +54,8 @@ void main() {
 )";
 
 // ================================================================
-// PART 2: FONT (Bitmap-based)
+// FONT RENDERER
 // ================================================================
-
 struct Glyph {
     float u1, v1, u2, v2;
     float width, height;
@@ -71,23 +67,19 @@ private:
     GLuint texture_id = 0;
     int tex_width = 512, tex_height = 512;
     std::map<char, Glyph> glyphs;
-    float font_size = 16.0f;
     bool initialized = false;
-    
-    // Simple 8x8 pixel font data (ASCII 32-126)
-    static const unsigned char font_data[128][8];
+    GLuint shader_program = 0;
     
 public:
-    bool init() {
+    bool init(GLuint prog) {
         if (initialized) return true;
+        shader_program = prog;
         
-        // Create texture
         glGenTextures(1, &texture_id);
         glBindTexture(GL_TEXTURE_2D, texture_id);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         
-        // Build glyph texture from font data
         unsigned char* pixels = new unsigned char[tex_width * tex_height * 4];
         memset(pixels, 0, tex_width * tex_height * 4);
         
@@ -109,18 +101,15 @@ public:
             g.advance = char_width;
             glyphs[(char)c] = g;
             
-            // Fill pixel data
             for (int y = 0; y < char_height; y++) {
                 for (int x = 0; x < char_width; x++) {
                     int px = col * char_width + x;
                     int py = row * char_height + y;
                     int index = (py * tex_width + px) * 4;
-                    
-                    bool bit = (font_data[c][y] >> (7 - x)) & 1;
-                    pixels[index] = bit ? 255 : 0;
-                    pixels[index+1] = bit ? 255 : 0;
-                    pixels[index+2] = bit ? 255 : 0;
-                    pixels[index+3] = bit ? 255 : 0;
+                    pixels[index] = 255;
+                    pixels[index+1] = 255;
+                    pixels[index+2] = 255;
+                    pixels[index+3] = 255;
                 }
             }
         }
@@ -134,14 +123,7 @@ public:
     }
     
     float get_text_width(const std::string& text, float scale = 1.0f) {
-        float w = 0;
-        for (char c : text) {
-            auto it = glyphs.find(c);
-            if (it != glyphs.end()) {
-                w += it->second.advance * scale;
-            }
-        }
-        return w;
+        return text.length() * 8 * scale;
     }
     
     void draw_text(const std::string& text, float x, float y, float r, float g, float b, float a, float scale = 1.0f) {
@@ -154,15 +136,18 @@ public:
         glUniform1i(glGetUniformLocation(shader_program, "uUseTexture"), 1);
         
         float cx = x;
+        float char_width = 8 * scale;
+        float char_height = 8 * scale;
+        
         for (char c : text) {
             auto it = glyphs.find(c);
             if (it == glyphs.end()) continue;
             
             Glyph& g = it->second;
-            float w = g.width * scale;
-            float h = g.height * scale;
+            float w = char_width;
+            float h = char_height;
             
-            float vertices[] = {
+            float vertices[32] = {
                 cx, y,     g.u1, g.v1, r, g, b, a,
                 cx + w, y, g.u2, g.v1, r, g, b, a,
                 cx, y + h, g.u1, g.v2, r, g, b, a,
@@ -184,50 +169,14 @@ public:
             glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
             glDeleteBuffers(1, &vbo);
             
-            cx += g.advance * scale;
+            cx += 8 * scale;
         }
     }
-    
-private:
-    GLuint shader_program = 0;
-};
-
-// Font data (8x8 bitmap)
-const unsigned char FontRenderer::font_data[128][8] = {
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00}, // 32 space
-    {0x18,0x3C,0x3C,0x18,0x18,0x00,0x18,0x18}, // 33 !
-    {0x66,0x66,0x24,0x00,0x00,0x00,0x00,0x00}, // 34 "
-    {0x6C,0x6C,0xFE,0x6C,0xFE,0x6C,0x6C,0x00}, // 35 #
-    {0x18,0x7E,0xC0,0x7E,0x06,0x7E,0x18,0x00}, // 36 $
-    {0x00,0x66,0x6C,0x18,0x30,0x66,0x46,0x00}, // 37 %
-    {0x38,0x6C,0x38,0x76,0xDC,0xCC,0x76,0x00}, // 38 &
-    {0x18,0x18,0x30,0x00,0x00,0x00,0x00,0x00}, // 39 '
-    {0x0C,0x18,0x30,0x30,0x30,0x18,0x0C,0x00}, // 40 (
-    {0x30,0x18,0x0C,0x0C,0x0C,0x18,0x30,0x00}, // 41 )
-    {0x00,0x66,0x3C,0xFF,0x3C,0x66,0x00,0x00}, // 42 *
-    {0x00,0x18,0x18,0x7E,0x18,0x18,0x00,0x00}, // 43 +
-    {0x00,0x00,0x00,0x00,0x00,0x18,0x18,0x30}, // 44 ,
-    {0x00,0x00,0x00,0x7E,0x00,0x00,0x00,0x00}, // 45 -
-    {0x00,0x00,0x00,0x00,0x00,0x18,0x18,0x00}, // 46 .
-    {0x06,0x0C,0x18,0x30,0x60,0xC0,0x80,0x00}, // 47 /
-    {0x7E,0xC6,0xCE,0xD6,0xE6,0xC6,0x7E,0x00}, // 48 0
-    {0x18,0x38,0x18,0x18,0x18,0x18,0x7E,0x00}, // 49 1
-    {0x7E,0xC6,0x0C,0x18,0x30,0x60,0xFE,0x00}, // 50 2
-    {0x7E,0xC6,0x0C,0x38,0x0C,0xC6,0x7E,0x00}, // 51 3
-    {0x0C,0x1C,0x3C,0x6C,0xCC,0xFE,0x0C,0x00}, // 52 4
-    {0xFE,0xC0,0xFC,0x06,0x06,0xC6,0x7E,0x00}, // 53 5
-    {0x3C,0x60,0xC0,0xFC,0xC6,0xC6,0x7C,0x00}, // 54 6
-    {0xFE,0x06,0x0C,0x18,0x30,0x30,0x30,0x00}, // 55 7
-    {0x7C,0xC6,0xC6,0x7C,0xC6,0xC6,0x7C,0x00}, // 56 8
-    {0x7C,0xC6,0xC6,0x7E,0x06,0x0C,0x78,0x00}, // 57 9
-    {0x00,0x18,0x18,0x00,0x00,0x18,0x18,0x00}, // 58 :
-    // ... (продолжение для всех ASCII)
 };
 
 // ================================================================
-// PART 3: RENDERER CLASS
+// RENDERER CLASS
 // ================================================================
-
 class Renderer {
 private:
     static Renderer* instance;
@@ -242,17 +191,14 @@ private:
     GLuint vbo = 0;
     float projection[16];
     std::mutex mtx;
+    int screen_width = 1080;
+    int screen_height = 2400;
     
-    // Vertex buffer for primitives
     struct Vertex {
         float x, y;
         float r, g, b, a;
     };
     std::vector<Vertex> vertices;
-    
-    // Screen dimensions
-    int screen_width = 1080;
-    int screen_height = 2400;
     
     Renderer() {}
     
@@ -298,12 +244,10 @@ private:
     }
     
     bool init_shaders() {
-        // Compile vertex shader
         GLuint vertex = glCreateShader(GL_VERTEX_SHADER);
         glShaderSource(vertex, 1, &vertex_shader_source, nullptr);
         glCompileShader(vertex);
         
-        // Compile fragment shader
         GLuint fragment = glCreateShader(GL_FRAGMENT_SHADER);
         glShaderSource(fragment, 1, &fragment_shader_source, nullptr);
         glCompileShader(fragment);
@@ -318,7 +262,6 @@ private:
         
         glUseProgram(shader_program);
         
-        // Set orthographic projection
         float left = 0, right = screen_width;
         float bottom = screen_height, top = 0;
         projection[0] = 2.0f / (right - left);
@@ -341,14 +284,6 @@ private:
         return true;
     }
     
-    void setup_vertex_attribs() {
-        glBindBuffer(GL_ARRAY_BUFFER, vbo);
-        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(2 * sizeof(float)));
-        glEnableVertexAttribArray(1);
-    }
-    
 public:
     static Renderer& get() {
         if (!instance) instance = new Renderer();
@@ -367,7 +302,7 @@ public:
         
         if (!init_egl()) return false;
         if (!init_shaders()) return false;
-        if (!font.init()) return false;
+        if (!font.init(shader_program)) return false;
         
         glClearColor(0, 0, 0, 0);
         glEnable(GL_BLEND);
@@ -392,7 +327,12 @@ public:
         
         glUseProgram(shader_program);
         glUniform1i(glGetUniformLocation(shader_program, "uUseTexture"), 0);
-        setup_vertex_attribs();
+        
+        glBindBuffer(GL_ARRAY_BUFFER, vbo);
+        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
+        glEnableVertexAttribArray(0);
+        glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(2 * sizeof(float)));
+        glEnableVertexAttribArray(1);
         
         glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(Vertex), vertices.data(), GL_DYNAMIC_DRAW);
         glDrawArrays(GL_TRIANGLES, 0, vertices.size());
@@ -403,7 +343,6 @@ public:
     void draw_rect(float x, float y, float w, float h, float r, float g, float b, float a) {
         if (w <= 0 || h <= 0) return;
         float x2 = x + w, y2 = y + h;
-        
         Vertex v[] = {
             {x, y, r, g, b, a}, {x2, y, r, g, b, a}, {x, y2, r, g, b, a},
             {x2, y, r, g, b, a}, {x2, y2, r, g, b, a}, {x, y2, r, g, b, a}
@@ -419,13 +358,11 @@ public:
     }
     
     void draw_line(float x1, float y1, float x2, float y2, float r, float g, float b, float a, float thickness = 1.0f) {
-        // Simple line as thin rect
         float dx = x2 - x1, dy = y2 - y1;
         float len = sqrt(dx*dx + dy*dy);
         if (len < 0.001f) return;
         float nx = -dy / len * thickness / 2;
         float ny = dx / len * thickness / 2;
-        
         Vertex v[] = {
             {x1 + nx, y1 + ny, r, g, b, a},
             {x1 - nx, y1 - ny, r, g, b, a},
@@ -451,8 +388,6 @@ public:
     
     void draw_text(const std::string& text, float x, float y, float r, float g, float b, float a, float size = 14.0f, bool center = false) {
         if (text.empty()) return;
-        
-        // Scale font size
         float scale = size / 16.0f;
         if (center) {
             float w = font.get_text_width(text, scale);
@@ -470,121 +405,34 @@ public:
 Renderer* Renderer::instance = nullptr;
 
 // ================================================================
-// PART 4: WRAPPER FUNCTIONS (connect to ESP and UI)
+// WRAPPER FUNCTIONS (for ESP)
 // ================================================================
-
-namespace esp {
-    void draw_rect(float x, float y, float w, float h, const game::Color& color, float rounding) {
-        if (w <= 0 || h <= 0) return;
-        Renderer::get().draw_rect(x, y, w, h, color.r, color.g, color.b, color.a);
-    }
-    
-    void draw_rect_outline(float x, float y, float w, float h, const game::Color& color, float thickness) {
-        Renderer::get().draw_rect_outline(x, y, w, h, color.r, color.g, color.b, color.a, thickness);
-    }
-    
-    void draw_text(float x, float y, const std::string& text, const game::Color& color, float size, bool center) {
-        Renderer::get().draw_text(text, x, y, color.r, color.g, color.b, color.a, size, center);
-    }
-    
-    void draw_line(float x1, float y1, float x2, float y2, const game::Color& color, float thickness) {
-        Renderer::get().draw_line(x1, y1, x2, y2, color.r, color.g, color.b, color.a, thickness);
-    }
-    
-    void draw_filled_rect(float x, float y, float w, float h, const game::Color& color) {
-        Renderer::get().draw_rect(x, y, w, h, color.r, color.g, color.b, color.a);
-    }
-    
-    void draw_circle(float x, float y, float r, const game::Color& color, int segments) {
-        Renderer::get().draw_circle(x, y, r, color.r, color.g, color.b, color.a, segments);
-    }
-    
-    void draw_triangle(float x1, float y1, float x2, float y2, float x3, float y3, const game::Color& color) {
-        Renderer::get().draw_line(x1, y1, x2, y2, color, 1);
-        Renderer::get().draw_line(x2, y2, x3, y3, color, 1);
-        Renderer::get().draw_line(x3, y3, x1, y1, color, 1);
-    }
+void draw_rect(float x, float y, float w, float h, float r, float g, float b, float a) {
+    Renderer::get().draw_rect(x, y, w, h, r, g, b, a);
 }
 
-namespace ui {
-    void draw_rect(float x, float y, float w, float h, const game::Color& col) {
-        Renderer::get().draw_rect(x, y, w, h, col.r, col.g, col.b, col.a);
-    }
-    
-    void draw_text(float x, float y, const std::string& text, const game::Color& col, float size, bool center) {
-        Renderer::get().draw_text(text, x, y, col.r, col.g, col.b, col.a, size, center);
-    }
-    
-    void draw_checkbox(float x, float y, bool& value, const std::string& label) {
-        game::Color bg = value ? game::Color(0.2f, 0.6f, 1.0f, 1.0f) : game::Color(0.3f, 0.3f, 0.3f, 1.0f);
-        Renderer::get().draw_rect(x, y, 20, 20, bg.r, bg.g, bg.b, bg.a);
-        Renderer::get().draw_rect_outline(x, y, 20, 20, 0.5f, 0.5f, 0.5f, 0.8f, 1);
-        if (value) {
-            Renderer::get().draw_line(x + 4, y + 10, x + 8, y + 16, 1, 1, 1, 1, 2);
-            Renderer::get().draw_line(x + 8, y + 16, x + 16, y + 4, 1, 1, 1, 1, 2);
-        }
-        if (!label.empty()) {
-            Renderer::get().draw_text(label, x + 28, y + 3, 1, 1, 1, 0.9f, 14);
-        }
-    }
-    
-    void draw_slider(float x, float y, float& value, float min, float max, const std::string& format) {
-        float progress = (value - min) / (max - min);
-        char buf[64];
-        snprintf(buf, sizeof(buf), format.c_str(), value);
-        Renderer::get().draw_text(buf, x + 210, y + 4, 1, 1, 1, 0.8f, 12);
-        Renderer::get().draw_rect(x, y + 6, 200, 8, 0.2f, 0.2f, 0.2f, 1.0f);
-        Renderer::get().draw_rect(x, y + 6, 200 * progress, 8, 0.2f, 0.6f, 1.0f, 1.0f);
-        Renderer::get().draw_circle(x + 200 * progress, y + 10, 6, 0.4f, 0.8f, 1.0f, 1.0f);
-    }
-    
-    void draw_combo(float x, float y, std::vector<std::string>& items, int& selected, const std::string& label) {
-        if (!label.empty()) {
-            Renderer::get().draw_text(label + ":", x, y + 4, 1, 1, 1, 0.7f, 12);
-            x += 80;
-        }
-        std::string display = (selected >= 0 && selected < (int)items.size()) ? items[selected] : "Select";
-        Renderer::get().draw_rect(x, y, 150, 28, 0.2f, 0.2f, 0.2f, 1.0f);
-        Renderer::get().draw_rect_outline(x, y, 150, 28, 0.4f, 0.4f, 0.4f, 0.8f, 1);
-        Renderer::get().draw_text(display, x + 8, y + 6, 1, 1, 1, 0.9f, 13);
-        // Arrow
-        Renderer::get().draw_line(x + 135, y + 8, x + 140, y + 14, 1, 1, 1, 0.6f, 1);
-        Renderer::get().draw_line(x + 140, y + 14, x + 145, y + 8, 1, 1, 1, 0.6f, 1);
-    }
+void draw_rect_outline(float x, float y, float w, float h, float r, float g, float b, float a, float thickness) {
+    Renderer::get().draw_rect_outline(x, y, w, h, r, g, b, a, thickness);
 }
 
-// ================================================================
-// PART 5: JNI BRIDGE
-// ================================================================
-
-extern "C" {
-
-JNIEXPORT void JNICALL
-Java_com_standoff2_RendererBridge_nativeInit(JNIEnv* env, jobject obj, jobject surface, jint width, jint height) {
-    ANativeWindow* window = ANativeWindow_fromSurface(env, surface);
-    if (!window) {
-        RLOGE("Failed to get native window");
-        return;
-    }
-    Renderer::get().init(window, width, height);
+void draw_text(float x, float y, const std::string& text, float r, float g, float b, float a, float size, bool center) {
+    Renderer::get().draw_text(text, x, y, r, g, b, a, size, center);
 }
 
-JNIEXPORT void JNICALL
-Java_com_standoff2_RendererBridge_nativeRender(JNIEnv* env, jobject obj) {
-    Renderer::get().begin_frame();
-    
-    // Render ESP
-    // ESP will be called from GameLoop
-    
-    // Render UI Menu
-    if (g_menu) g_menu->render();
-    
-    Renderer::get().end_frame();
+void draw_line(float x1, float y1, float x2, float y2, float r, float g, float b, float a, float thickness) {
+    Renderer::get().draw_line(x1, y1, x2, y2, r, g, b, a, thickness);
 }
 
-JNIEXPORT void JNICALL
-Java_com_standoff2_RendererBridge_nativeResize(JNIEnv* env, jobject obj, jint width, jint height) {
-    Renderer::get().set_screen_size(width, height);
+void draw_filled_rect(float x, float y, float w, float h, float r, float g, float b, float a) {
+    Renderer::get().draw_rect(x, y, w, h, r, g, b, a);
 }
 
+void draw_circle(float x, float y, float radius, float r, float g, float b, float a, int segments) {
+    Renderer::get().draw_circle(x, y, radius, r, g, b, a, segments);
+}
+
+void draw_triangle(float x1, float y1, float x2, float y2, float x3, float y3, float r, float g, float b, float a) {
+    Renderer::get().draw_line(x1, y1, x2, y2, r, g, b, a, 1);
+    Renderer::get().draw_line(x2, y2, x3, y3, r, g, b, a, 1);
+    Renderer::get().draw_line(x3, y3, x1, y1, r, g, b, a, 1);
 }
